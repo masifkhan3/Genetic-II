@@ -4,6 +4,8 @@ import pandas as pd
 import torch
 import faiss
 import numpy as np
+pip install --upgrade transformers
+
 
 # Load generator model and tokenizer for BART
 generator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large")

@@ -1,3 +1,8 @@
+pip install transformers
+source /path/to/venv/bin/activate
+pip install transformers
+
+
 import streamlit as st
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import pandas as pd

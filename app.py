@@ -4,7 +4,17 @@ import pandas as pd
 import torch
 import faiss
 import numpy as np
-pip install --upgrade transformers
+import streamlit
+import pandas
+import numpy
+import matplotlib
+import importplotly
+import scikit-learn
+import tensorflow  # or torch
+import transformers
+import requests
+import gunicorn
+
 
 
 # Load generator model and tokenizer for BART

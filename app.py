@@ -1,26 +1,22 @@
-pip install transformers
-source /path/to/venv/bin/activate
-pip install transformers
-
-
 import streamlit as st
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModel
 import pandas as pd
 import torch
 import faiss
 import numpy as np
 
-# Load models for embeddings and generation
-tokenizer_embed = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-model_embed = AutoModelForSeq2SeqLM.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-
+# Load generator model and tokenizer for BART
 generator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large")
 generator_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large")
 
-# Load the dataset
+# Load embedding model and tokenizer for FAISS indexing
+embed_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+embed_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+
+# Load the medical dataset
 @st.cache_data
 def load_dataset():
-    data = pd.read_csv("medical_dataset.csv")
+    data = pd.read_csv("medical_dataset.csv")  # Replace with your dataset path
     data["text"] = (
         "Disease Name: " + data["Disease Name"].fillna("") +
         "\nGene(s) Involved: " + data["Gene(s) Involved"].fillna("") +
@@ -38,14 +34,14 @@ def load_dataset():
 data = load_dataset()
 texts = data["text"].tolist()
 
-# Embed all texts for FAISS indexing
+# Generate embeddings for all texts
 @st.cache_data
 def embed_texts(texts):
     embeddings = []
     for text in texts:
-        inputs = tokenizer_embed(text, return_tensors="pt", padding=True, truncation=True)
+        inputs = embed_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
-            embeddings.append(model_embed(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy())
+            embeddings.append(embed_model(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy())
     return np.array(embeddings)
 
 embeddings = embed_texts(texts)
@@ -54,13 +50,13 @@ embeddings = embed_texts(texts)
 index = faiss.IndexFlatL2(embeddings.shape[1])
 index.add(embeddings)
 
-# Function to generate embedding for a query
+# Function to create an embedding for a query
 def embed_query(query):
-    inputs = tokenizer_embed(query, return_tensors="pt", padding=True, truncation=True)
+    inputs = embed_tokenizer(query, return_tensors="pt", padding=True, truncation=True)
     with torch.no_grad():
-        return model_embed(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy()
+        return embed_model(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy()
 
-# Function to retrieve similar entries and generate response
+# Function to retrieve similar entries and generate a response
 def retrieve_and_generate(query, top_k=3):
     query_embedding = embed_query(query).reshape(1, -1)
     distances, indices = index.search(query_embedding, top_k)
@@ -71,9 +67,9 @@ def retrieve_and_generate(query, top_k=3):
     outputs = generator_model.generate(**inputs, max_length=150, num_return_sequences=1)
     return generator_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# Streamlit UI
+# Streamlit UI for input and output
 st.title("Medical Query Assistant")
-st.write("Enter patient information and medical details to get insights.")
+st.write("Enter patient information and medical details to receive insights.")
 
 # Collect user input
 patient_name = st.text_input("Patient Name:")
@@ -81,11 +77,11 @@ patient_sex = st.selectbox("Patient Sex:", options=["Male", "Female", "Other"])
 patient_age = st.number_input("Patient Age:", min_value=0, max_value=120, step=1)
 
 disease = st.text_input("Enter known disease (if applicable):")
-symptoms = st.text_area("Enter symptoms (separate multiple symptoms with commas):")
+symptoms = st.text_area("Describe symptoms (separate multiple symptoms with commas):")
 medical_test = st.text_area("Enter details of any relevant medical tests:")
 
 if st.button("Get Medical Insight"):
-    # Construct query
+    # Construct the query
     query = f"Patient Name: {patient_name}\nSex: {patient_sex}\nAge: {patient_age} years\n"
     if disease:
         query += f"Disease Name: {disease}\n"
@@ -94,7 +90,7 @@ if st.button("Get Medical Insight"):
     if medical_test:
         query += f"Medical Test: {medical_test}\n"
 
-    # Generate response
+    # Generate and display the response
     response = retrieve_and_generate(query)
     st.write("### Generated Medical Insight:")
     st.write(response)

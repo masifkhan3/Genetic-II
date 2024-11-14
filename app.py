@@ -1,34 +1,15 @@
+# Import required libraries
 import streamlit as st
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModel
 import pandas as pd
 import torch
 import faiss
 import numpy as np
-import streamlit
-import pandas
-import numpy
-import matplotlib
-import importplotly
-import scikit-learn
-import tensorflow  # or torch
-import transformers
-import requests
-import gunicorn
+from transformers import AutoTokenizer, AutoModel, AutoModelForSeq2SeqLM
 
-
-
-# Load generator model and tokenizer for BART
-generator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large")
-generator_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large")
-
-# Load embedding model and tokenizer for FAISS indexing
-embed_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-embed_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-
-# Load the medical dataset
+# Load your dataset
 @st.cache_data
-def load_dataset():
-    data = pd.read_csv("medical_dataset.csv")  # Replace with your dataset path
+def load_data():
+    data = pd.read_csv("/content/genetic-Final.csv")
     data["text"] = (
         "Disease Name: " + data["Disease Name"].fillna("") +
         "\nGene(s) Involved: " + data["Gene(s) Involved"].fillna("") +
@@ -41,68 +22,86 @@ def load_dataset():
         "\nMinimum Values for Medical Tests: " + data["Minimum Values for Medical Tests"].fillna("") +
         "\nEmergency Treatment: " + data["Emergency Treatment"].fillna("")
     )
-    return data
+    return data["text"].tolist()
 
-data = load_dataset()
-texts = data["text"].tolist()
+texts = load_data()
 
-# Generate embeddings for all texts
-@st.cache_data
-def embed_texts(texts):
-    embeddings = []
-    for text in texts:
-        inputs = embed_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+# Load models and tokenizer
+@st.cache_resource
+def load_models():
+    embedding_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    embedding_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    generator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large")
+    generator_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large")
+    return embedding_tokenizer, embedding_model, generator_tokenizer, generator_model
+
+embedding_tokenizer, embedding_model, generator_tokenizer, generator_model = load_models()
+
+# Initialize FAISS index
+@st.cache_resource
+def initialize_faiss_index(texts):
+    # Function to generate embeddings
+    def embed_text(text):
+        inputs = embedding_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
-            embeddings.append(embed_model(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy())
-    return np.array(embeddings)
+            embeddings = embedding_model(**inputs).last_hidden_state.mean(dim=1)
+        return embeddings.squeeze().numpy()
 
-embeddings = embed_texts(texts)
+    # Generate embeddings for all texts
+    embeddings = [embed_text(text) for text in texts]
 
-# Build FAISS index
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(embeddings)
+    # Initialize FAISS index
+    embedding_dim = embeddings[0].shape[0]
+    index = faiss.IndexFlatL2(embedding_dim)
+    index.add(np.array(embeddings))
+    return index
 
-# Function to create an embedding for a query
-def embed_query(query):
-    inputs = embed_tokenizer(query, return_tensors="pt", padding=True, truncation=True)
-    with torch.no_grad():
-        return embed_model(**inputs).last_hidden_state.mean(dim=1).squeeze().numpy()
+index = initialize_faiss_index(texts)
 
 # Function to retrieve similar entries and generate a response
 def retrieve_and_generate(query, top_k=3):
-    query_embedding = embed_query(query).reshape(1, -1)
+    # Generate query embedding
+    query_embedding = embed_text(query).reshape(1, -1)
+
+    # Retrieve top-k similar texts
     distances, indices = index.search(query_embedding, top_k)
     retrieved_texts = [texts[i] for i in indices[0]]
+
+    # Prepare input for generation by combining retrieved texts
     context = "\n\n".join(retrieved_texts) + "\n\nQuestion: " + query
 
+    # Generate answer
     inputs = generator_tokenizer(context, return_tensors="pt", max_length=512, truncation=True)
     outputs = generator_model.generate(**inputs, max_length=150, num_return_sequences=1)
+
+    # Decode the output
     return generator_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# Streamlit UI for input and output
+# Streamlit Interface
 st.title("Medical Query Assistant")
-st.write("Enter patient information and medical details to receive insights.")
+st.write("Enter details about diseases, symptoms, or medical tests for information retrieval.")
 
-# Collect user input
-patient_name = st.text_input("Patient Name:")
-patient_sex = st.selectbox("Patient Sex:", options=["Male", "Female", "Other"])
-patient_age = st.number_input("Patient Age:", min_value=0, max_value=120, step=1)
+# Input fields
+disease = st.text_input("Enter the disease name:")
+symptoms = st.text_area("Enter symptoms:")
+medical_test = st.text_input("Enter medical test details:")
 
-disease = st.text_input("Enter known disease (if applicable):")
-symptoms = st.text_area("Describe symptoms (separate multiple symptoms with commas):")
-medical_test = st.text_area("Enter details of any relevant medical tests:")
+# Process input query
+query = ""
+if disease:
+    query += f"Disease Name: {disease}\n"
+if symptoms:
+    query += f"Symptoms: {symptoms}\n"
+if medical_test:
+    query += f"Medical Test: {medical_test}\n"
 
-if st.button("Get Medical Insight"):
-    # Construct the query
-    query = f"Patient Name: {patient_name}\nSex: {patient_sex}\nAge: {patient_age} years\n"
-    if disease:
-        query += f"Disease Name: {disease}\n"
-    if symptoms:
-        query += f"Symptoms: {symptoms}\n"
-    if medical_test:
-        query += f"Medical Test: {medical_test}\n"
+# Button to submit query and generate response
+if st.button("Generate Response"):
+    if query.strip():
+        with st.spinner("Generating response..."):
+            response = retrieve_and_generate(query)
+            st.subheader("Generated Response")
+            st.write(response)
+    else:
+        st.warning("Please enter at least one detail.")
 
-    # Generate and display the response
-    response = retrieve_and_generate(query)
-    st.write("### Generated Medical Insight:")
-    st.write(response)

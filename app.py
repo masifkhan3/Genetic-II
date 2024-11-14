@@ -1,7 +1,7 @@
 # Import required libraries
 import streamlit as st
 import pandas as pd
-#import torch
+import torch
 import faiss
 import numpy as np
 from transformers import AutoTokenizer, AutoModel, AutoModelForSeq2SeqLM
